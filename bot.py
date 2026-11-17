@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 import telebot
@@ -28,6 +29,7 @@ from database import (
     asignar_rol,
     obtener_rol,
     obtener_usuario,
+    obtener_usuarios_por_rol,
     crear_caso,
     obtener_casos_por_estado,
     marcar_casos_como_leidos,
@@ -77,8 +79,31 @@ def enviar_caso_a_chat(chat_id: int, texto: str, foto_id: str = None):
                 bot.send_message(chat_id, texto)
             return
         except Exception as e:
-            logger.warning(f"No se pudo enviar la foto con ID {foto_id}: {e}")
-    bot.send_message(chat_id, texto)
+            logger.warning(f"No se pudo enviar la foto con ID {foto_id} a {chat_id}: {e}")
+    try:
+        bot.send_message(chat_id, texto)
+    except Exception as e:
+        logger.warning(f"No se pudo enviar mensaje a {chat_id}: {e}")
+
+
+def notificar_a_todos_los_cat(texto: str, foto_id: str = None):
+    """Envía una notificación push automática a todos los usuarios con rol CAT."""
+    usuarios_cat = obtener_usuarios_por_rol(ROL_CAT)
+    for u in usuarios_cat:
+        try:
+            enviar_caso_a_chat(u["user_id"], texto, foto_id)
+        except Exception as e:
+            logger.warning(f"Error al notificar al CAT {u['user_id']}: {e}")
+
+
+def notificar_a_todos_los_supervisores(texto: str, foto_id: str = None):
+    """Envía una notificación push automática a todos los usuarios con rol Supervisor."""
+    usuarios_sup = obtener_usuarios_por_rol(ROL_SUPERVISOR)
+    for u in usuarios_sup:
+        try:
+            enviar_caso_a_chat(u["user_id"], texto, foto_id)
+        except Exception as e:
+            logger.warning(f"Error al notificar al Supervisor {u['user_id']}: {e}")
 
 
 def obtener_nombre_remitente(message: types.Message) -> str:
@@ -516,6 +541,15 @@ def handler_mensajes_y_fotos(message: types.Message):
             f"<i>El reporte ha sido puesto a disposición de la sala CAT.</i>"
         )
         bot.reply_to(message, texto_confirmacion, reply_markup=obtener_teclado_por_rol(ROL_SUPERVISOR))
+
+        # Notificar automáticamente a la sala CAT
+        texto_aviso_cat = (
+            f"🔔 <b>¡NUEVO REPORTE ELÉCTRICO ASIGNADO!</b>\n\n"
+            f"🆔 <b>Caso #{caso_id}</b>\n"
+            f"👤 <b>Supervisor:</b> {remitente_nombre}\n"
+            f"📝 <b>Detalle de Avería:</b>\n{contenido}"
+        )
+        notificar_a_todos_los_cat(texto_aviso_cat, foto_id=foto_id)
         return
 
     # 3. Flujo 2 (Vuelta): CAR envía solución de la cuadrilla (con o sin foto)
@@ -556,6 +590,21 @@ def handler_mensajes_y_fotos(message: types.Message):
                 f"<i>La solución ha quedado disponible para la revisión de los Supervisores.</i>"
             )
         bot.reply_to(message, texto_confirmacion, reply_markup=obtener_teclado_por_rol(ROL_CAR))
+
+        # Notificar automáticamente a los supervisores
+        caso_dict = {
+            "id": caso_id,
+            "tipo": "RESPUESTA_CAR",
+            "remitente_nombre": remitente_nombre,
+            "fecha_creacion": "Recién reportado",
+            "estado": ESTADO_RESPUESTA_CAR,
+            "contenido": contenido
+        }
+        texto_aviso_sup = (
+            f"🔔 <b>¡SOLUCIÓN DE CUADRILLA RECIBIDA!</b>\n\n"
+            + formatear_respuesta_car_supervisor(caso_dict)
+        )
+        notificar_a_todos_los_supervisores(texto_aviso_sup, foto_id=foto_id)
         return
 
     # 4. Caso CAT: No envía reportes por texto libre, consulta mediante el botón
@@ -608,11 +657,13 @@ def main():
         print("=" * 60 + "\n")
         sys.exit(1)
 
-    print("Iniciando Bot de Telegram (Polling)...")
-    try:
-        bot.infinity_polling(skip_pending=True)
-    except Exception as e:
-        logger.error(f"Error en infinity_polling: {e}", exc_info=True)
+    print("Iniciando Bot de Telegram (Polling Infinito y Resistente a Errores)...")
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=False, timeout=20, long_polling_timeout=20)
+        except Exception as e:
+            logger.error(f"Error en infinity_polling, reconectando automáticamente en 5 segundos: {e}")
+            time.sleep(5)
 
 
 if __name__ == "__main__":

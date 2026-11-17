@@ -120,6 +120,15 @@ def obtener_rol(user_id: int) -> Optional[str]:
     return user.get("rol") if user else None
 
 
+def obtener_usuarios_por_rol(rol: str) -> List[Dict[str, Any]]:
+    """Retorna todos los usuarios que tienen un rol específico."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM usuarios WHERE rol = ?", (rol,))
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
 def crear_caso(tipo: str, remitente_id: int, remitente_nombre: str, contenido: str, estado: str, foto_id: Optional[str] = None) -> int:
     """Crea un nuevo caso en la base de datos y retorna su ID."""
     with get_db_connection() as conn:
