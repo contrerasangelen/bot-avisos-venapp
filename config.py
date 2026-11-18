@@ -16,6 +16,11 @@ ROL_CAR = "CAR"
 
 ROLES_VALIDOS = {ROL_SUPERVISOR, ROL_CAT, ROL_CAR}
 
+# Municipios soportados
+MUNICIPIO_MARACAIBO = "Maracaibo"
+MUNICIPIO_SAN_FRANCISCO = "San Francisco"
+MUNICIPIO_TODOS = "Todos"
+
 # Estados del flujo
 ESTADO_PENDIENTE_CAT = "Pendiente CAT"
 ESTADO_LEIDO_CAT = "Leído CAT"

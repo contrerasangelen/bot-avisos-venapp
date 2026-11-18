@@ -38,6 +38,7 @@ def init_db():
                 username TEXT,
                 first_name TEXT,
                 rol TEXT DEFAULT NULL,
+                municipio TEXT DEFAULT 'Maracaibo',
                 fecha_registro DATETIME DEFAULT CURRENT_TIMESTAMP,
                 fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP
             )
@@ -53,17 +54,25 @@ def init_db():
                 contenido TEXT NOT NULL,
                 estado TEXT NOT NULL,
                 foto_id TEXT DEFAULT NULL,
+                municipio TEXT DEFAULT 'Maracaibo',
                 fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
                 fecha_leido DATETIME DEFAULT NULL,
                 FOREIGN KEY (remitente_id) REFERENCES usuarios (user_id)
             )
         """)
 
-        # Migración automática si la columna foto_id no existía
+        # Migración automática si la columna foto_id o municipio no existían
         cursor.execute("PRAGMA table_info(casos)")
-        columnas = [col["name"] for col in cursor.fetchall()]
-        if "foto_id" not in columnas:
+        columnas_casos = [col["name"] for col in cursor.fetchall()]
+        if "foto_id" not in columnas_casos:
             cursor.execute("ALTER TABLE casos ADD COLUMN foto_id TEXT DEFAULT NULL")
+        if "municipio" not in columnas_casos:
+            cursor.execute("ALTER TABLE casos ADD COLUMN municipio TEXT DEFAULT 'Maracaibo'")
+
+        cursor.execute("PRAGMA table_info(usuarios)")
+        columnas_usuarios = [col["name"] for col in cursor.fetchall()]
+        if "municipio" not in columnas_usuarios:
+            cursor.execute("ALTER TABLE usuarios ADD COLUMN municipio TEXT DEFAULT 'Maracaibo'")
 
 
 def registrar_usuario_si_no_existe(user_id: int, username: Optional[str], first_name: Optional[str]):
@@ -86,22 +95,22 @@ def registrar_usuario_si_no_existe(user_id: int, username: Optional[str], first_
             """, (username, first_name, user_id))
 
 
-def asignar_rol(user_id: int, nuevo_rol: str, username: Optional[str] = None, first_name: Optional[str] = None) -> bool:
-    """Asigna o actualiza el rol de un usuario."""
+def asignar_rol(user_id: int, nuevo_rol: str, municipio: str = "Maracaibo", username: Optional[str] = None, first_name: Optional[str] = None) -> bool:
+    """Asigna o actualiza el rol y municipio de un usuario."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT user_id FROM usuarios WHERE user_id = ?", (user_id,))
         if cursor.fetchone():
             cursor.execute("""
                 UPDATE usuarios 
-                SET rol = ?, username = coalesce(?, username), first_name = coalesce(?, first_name), fecha_actualizacion = CURRENT_TIMESTAMP
+                SET rol = ?, municipio = ?, username = coalesce(?, username), first_name = coalesce(?, first_name), fecha_actualizacion = CURRENT_TIMESTAMP
                 WHERE user_id = ?
-            """, (nuevo_rol, username, first_name, user_id))
+            """, (nuevo_rol, municipio, username, first_name, user_id))
         else:
             cursor.execute("""
-                INSERT INTO usuarios (user_id, username, first_name, rol, fecha_registro, fecha_actualizacion)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """, (user_id, username, first_name, nuevo_rol))
+                INSERT INTO usuarios (user_id, username, first_name, rol, municipio, fecha_registro, fecha_actualizacion)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """, (user_id, username, first_name, nuevo_rol, municipio))
         return True
 
 
@@ -120,23 +129,35 @@ def obtener_rol(user_id: int) -> Optional[str]:
     return user.get("rol") if user else None
 
 
-def obtener_usuarios_por_rol(rol: str) -> List[Dict[str, Any]]:
-    """Retorna todos los usuarios que tienen un rol específico."""
+def obtener_municipio_usuario(user_id: int) -> str:
+    """Retorna el municipio del usuario o 'Maracaibo' por defecto."""
+    user = obtener_usuario(user_id)
+    return user.get("municipio") or "Maracaibo" if user else "Maracaibo"
+
+
+def obtener_usuarios_por_rol(rol: str, municipio: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retorna todos los usuarios que tienen un rol específico, opcionalmente filtrados por municipio."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM usuarios WHERE rol = ?", (rol,))
+        if municipio:
+            cursor.execute("""
+                SELECT * FROM usuarios 
+                WHERE rol = ? AND (municipio = ? OR municipio = 'Todos')
+            """, (rol, municipio))
+        else:
+            cursor.execute("SELECT * FROM usuarios WHERE rol = ?", (rol,))
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
 
 
-def crear_caso(tipo: str, remitente_id: int, remitente_nombre: str, contenido: str, estado: str, foto_id: Optional[str] = None) -> int:
-    """Crea un nuevo caso en la base de datos y retorna su ID."""
+def crear_caso(tipo: str, remitente_id: int, remitente_nombre: str, contenido: str, estado: str, foto_id: Optional[str] = None, municipio: str = "Maracaibo") -> int:
+    """Crea un nuevo caso en la base de datos con su municipio y retorna su ID."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO casos (tipo, remitente_id, remitente_nombre, contenido, estado, foto_id, fecha_creacion)
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        """, (tipo, remitente_id, remitente_nombre, contenido, estado, foto_id))
+            INSERT INTO casos (tipo, remitente_id, remitente_nombre, contenido, estado, foto_id, municipio, fecha_creacion)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (tipo, remitente_id, remitente_nombre, contenido, estado, foto_id, municipio))
         return cursor.lastrowid
 
 
@@ -149,16 +170,24 @@ def obtener_caso_por_id(caso_id: int) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
-def obtener_ultimos_casos_por_tipo(tipo: str, limite: int = 5) -> List[Dict[str, Any]]:
-    """Obtiene los últimos N casos de un tipo específico (leídos o no) ordenados descendentemente."""
+def obtener_ultimos_casos_por_tipo(tipo: str, limite: int = 5, municipio: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Obtiene los últimos N casos de un tipo específico (leídos o no), opcionalmente filtrados por municipio."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM casos 
-            WHERE tipo = ? 
-            ORDER BY id DESC 
-            LIMIT ?
-        """, (tipo, limite))
+        if municipio:
+            cursor.execute("""
+                SELECT * FROM casos 
+                WHERE tipo = ? AND municipio = ?
+                ORDER BY id DESC 
+                LIMIT ?
+            """, (tipo, municipio, limite))
+        else:
+            cursor.execute("""
+                SELECT * FROM casos 
+                WHERE tipo = ? 
+                ORDER BY id DESC 
+                LIMIT ?
+            """, (tipo, limite))
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
 
@@ -178,15 +207,22 @@ def buscar_casos_por_texto(termino: str, limite: int = 5) -> List[Dict[str, Any]
         return [dict(row) for row in rows]
 
 
-def obtener_casos_por_estado(estado: str) -> List[Dict[str, Any]]:
-    """Obtiene los casos filtrados por su estado ordenados por fecha ascendente."""
+def obtener_casos_por_estado(estado: str, municipio: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Obtiene los casos filtrados por su estado y opcionalmente por municipio."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM casos 
-            WHERE estado = ? 
-            ORDER BY id ASC
-        """, (estado,))
+        if municipio:
+            cursor.execute("""
+                SELECT * FROM casos 
+                WHERE estado = ? AND municipio = ?
+                ORDER BY id ASC
+            """, (estado, municipio))
+        else:
+            cursor.execute("""
+                SELECT * FROM casos 
+                WHERE estado = ? 
+                ORDER BY id ASC
+            """, (estado,))
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
 

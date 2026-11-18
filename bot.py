@@ -13,6 +13,9 @@ from config import (
     ROL_SUPERVISOR,
     ROL_CAT,
     ROL_CAR,
+    MUNICIPIO_MARACAIBO,
+    MUNICIPIO_SAN_FRANCISCO,
+    MUNICIPIO_TODOS,
     ESTADO_PENDIENTE_CAT,
     ESTADO_LEIDO_CAT,
     ESTADO_RESPUESTA_CAR,
@@ -29,6 +32,7 @@ from database import (
     asignar_rol,
     obtener_rol,
     obtener_usuario,
+    obtener_municipio_usuario,
     obtener_usuarios_por_rol,
     crear_caso,
     obtener_casos_por_estado,
@@ -87,7 +91,7 @@ def enviar_caso_a_chat(chat_id: int, texto: str, foto_id: str = None):
 
 
 def notificar_a_todos_los_cat(texto: str, foto_id: str = None):
-    """Envía una notificación push automática a todos los usuarios con rol CAT."""
+    """Envía una notificación push automática a todos los usuarios con rol CAT (reciben todos los municipios)."""
     usuarios_cat = obtener_usuarios_por_rol(ROL_CAT)
     for u in usuarios_cat:
         try:
@@ -96,14 +100,14 @@ def notificar_a_todos_los_cat(texto: str, foto_id: str = None):
             logger.warning(f"Error al notificar al CAT {u['user_id']}: {e}")
 
 
-def notificar_a_todos_los_supervisores(texto: str, foto_id: str = None):
-    """Envía una notificación push automática a todos los usuarios con rol Supervisor."""
-    usuarios_sup = obtener_usuarios_por_rol(ROL_SUPERVISOR)
+def notificar_a_supervisores_de_municipio(texto: str, foto_id: str = None, municipio: str = "Maracaibo"):
+    """Envía una notificación push automática únicamente a los Supervisores del municipio correspondiente."""
+    usuarios_sup = obtener_usuarios_por_rol(ROL_SUPERVISOR, municipio=municipio)
     for u in usuarios_sup:
         try:
             enviar_caso_a_chat(u["user_id"], texto, foto_id)
         except Exception as e:
-            logger.warning(f"Error al notificar al Supervisor {u['user_id']}: {e}")
+            logger.warning(f"Error al notificar al Supervisor {u['user_id']} ({municipio}): {e}")
 
 
 def obtener_nombre_remitente(message: types.Message) -> str:
@@ -140,10 +144,11 @@ def cmd_start(message: types.Message):
         return
 
     markup = obtener_teclado_por_rol(rol)
+    municipio = obtener_municipio_usuario(user_id)
     texto = (
         f"⚡ <b>SISTEMA 1x10 + PEGASUS</b>\n"
         f"Bienvenido/a, <b>{first_name or 'Usuario'}</b>\n"
-        f"Rol activo: <b>{rol}</b>\n\n"
+        f"Rol activo: <b>{rol}</b> (📍 <i>{municipio}</i>)\n\n"
     )
 
     if rol == ROL_SUPERVISOR:
@@ -170,6 +175,7 @@ def cmd_start(message: types.Message):
 def cmd_mirol(message: types.Message):
     user_id = message.from_user.id
     rol = obtener_rol(user_id) or "Sin rol asignado"
+    municipio = obtener_municipio_usuario(user_id) if rol != "Sin rol asignado" else "N/A"
     markup = obtener_teclado_por_rol(rol)
     
     texto = (
@@ -177,7 +183,8 @@ def cmd_mirol(message: types.Message):
         f"• <b>ID:</b> <code>{user_id}</code>\n"
         f"• <b>Nombre:</b> {message.from_user.first_name}\n"
         f"• <b>Username:</b> @{message.from_user.username or 'N/A'}\n"
-        f"• <b>Rol asignado:</b> <b>{rol}</b>"
+        f"• <b>Rol asignado:</b> <b>{rol}</b>\n"
+        f"• <b>Municipio:</b> 📍 <b>{municipio}</b>"
     )
     bot.reply_to(message, texto, reply_markup=markup)
 
@@ -186,25 +193,46 @@ def cmd_mirol(message: types.Message):
 # ASIGNACIÓN DE ROLES (COMANDOS OCULTOS)
 # ==========================================
 
-@bot.message_handler(commands=["soysupervisor"])
+@bot.message_handler(commands=["soysupervisor", "soysupervisormcb"])
 def cmd_soy_supervisor(message: types.Message):
     user_id = message.from_user.id
     username = message.from_user.username
     first_name = message.from_user.first_name
 
-    asignar_rol(user_id, ROL_SUPERVISOR, username, first_name)
+    asignar_rol(user_id, ROL_SUPERVISOR, municipio=MUNICIPIO_MARACAIBO, username=username, first_name=first_name)
     markup = obtener_teclado_por_rol(ROL_SUPERVISOR)
 
     texto = (
-        "✅ <b>Rol Asignado con Éxito: SUPERVISOR</b>\n\n"
+        "✅ <b>Rol Asignado con Éxito: SUPERVISOR (MARACAIBO)</b>\n\n"
         "A partir de este momento puedes:\n"
-        "1. <b>Enviar reportes:</b> Escribe cualquier mensaje con la descripción de la avería eléctrica "
+        "1. <b>Enviar reportes:</b> Escribe cualquier mensaje con la avería eléctrica de Maracaibo "
         "y quedará guardado como <i>'Pendiente CAT'</i>.\n"
-        "2. <b>Revisar soluciones:</b> Utiliza el botón <b>'📋 Leer casos resueltos'</b> "
-        "para consultar las respuestas emitidas por las cuadrillas (CAR)."
+        "2. <b>Revisar soluciones:</b> Presiona <b>'📋 Leer casos resueltos'</b> "
+        "para consultar las respuestas emitidas por las cuadrillas de Maracaibo."
     )
     bot.reply_to(message, texto, reply_markup=markup)
-    logger.info(f"Usuario {user_id} ({username}) asignado como Supervisor.")
+    logger.info(f"Usuario {user_id} ({username}) asignado como Supervisor (Maracaibo).")
+
+
+@bot.message_handler(commands=["soysupervisorsfc"])
+def cmd_soy_supervisor_sfc(message: types.Message):
+    user_id = message.from_user.id
+    username = message.from_user.username
+    first_name = message.from_user.first_name
+
+    asignar_rol(user_id, ROL_SUPERVISOR, municipio=MUNICIPIO_SAN_FRANCISCO, username=username, first_name=first_name)
+    markup = obtener_teclado_por_rol(ROL_SUPERVISOR)
+
+    texto = (
+        "✅ <b>Rol Asignado con Éxito: SUPERVISOR (SAN FRANCISCO)</b>\n\n"
+        "A partir de este momento puedes:\n"
+        "1. <b>Enviar reportes:</b> Escribe cualquier mensaje con la avería eléctrica de San Francisco "
+        "y quedará guardado como <i>'Pendiente CAT'</i>.\n"
+        "2. <b>Revisar soluciones:</b> Presiona <b>'📋 Leer casos resueltos'</b> "
+        "para consultar las respuestas emitidas por las cuadrillas de San Francisco."
+    )
+    bot.reply_to(message, texto, reply_markup=markup)
+    logger.info(f"Usuario {user_id} ({username}) asignado como Supervisor (San Francisco).")
 
 
 @bot.message_handler(commands=["soycat"])
@@ -213,36 +241,55 @@ def cmd_soy_cat(message: types.Message):
     username = message.from_user.username
     first_name = message.from_user.first_name
 
-    asignar_rol(user_id, ROL_CAT, username, first_name)
+    asignar_rol(user_id, ROL_CAT, municipio=MUNICIPIO_TODOS, username=username, first_name=first_name)
     markup = obtener_teclado_por_rol(ROL_CAT)
 
     texto = (
-        "✅ <b>Rol Asignado con Éxito: CAT</b>\n\n"
-        "A partir de este momento puedes:\n"
-        "• Presionar el botón persistente <b>'📥 Leer nuevos casos'</b> para recibir los reportes "
-        "enviados por los supervisores que se encuentren pendientes de revisión."
+        "✅ <b>Rol Asignado con Éxito: CAT (SALA SITUACIONAL CENTRAL)</b>\n\n"
+        "A partir de este momento recibirás y podrás gestionar los reportes de "
+        "<b>Maracaibo</b> y <b>San Francisco</b> de forma centralizada.\n\n"
+        "• Presiona <b>'📥 Leer nuevos casos'</b> para recibir los reportes pendientes con su etiqueta de municipio."
     )
     bot.reply_to(message, texto, reply_markup=markup)
-    logger.info(f"Usuario {user_id} ({username}) asignado como CAT.")
+    logger.info(f"Usuario {user_id} ({username}) asignado como CAT (Central).")
 
 
-@bot.message_handler(commands=["soycar"])
+@bot.message_handler(commands=["soycar", "soycarmcb"])
 def cmd_soy_car(message: types.Message):
     user_id = message.from_user.id
     username = message.from_user.username
     first_name = message.from_user.first_name
 
-    asignar_rol(user_id, ROL_CAR, username, first_name)
+    asignar_rol(user_id, ROL_CAR, municipio=MUNICIPIO_MARACAIBO, username=username, first_name=first_name)
     markup = obtener_teclado_por_rol(ROL_CAR)
 
     texto = (
-        "✅ <b>Rol Asignado con Éxito: CAR (Cuadrilla)</b>\n\n"
-        "A partir de este momento puedes reportar la atención de averías.\n\n"
+        "✅ <b>Rol Asignado con Éxito: CAR / CUADRILLA (MARACAIBO)</b>\n\n"
+        "A partir de este momento puedes reportar la atención de averías de Maracaibo.\n\n"
         "📝 Presiona el botón <b>'📝 Copiar Plantilla de Cierre'</b> o usa /plantilla "
         "para obtener el formato oficial, complétalo y envíalo."
     )
     bot.reply_to(message, texto, reply_markup=markup)
-    logger.info(f"Usuario {user_id} ({username}) asignado como CAR.")
+    logger.info(f"Usuario {user_id} ({username}) asignado como CAR (Maracaibo).")
+
+
+@bot.message_handler(commands=["soycarsfc"])
+def cmd_soy_car_sfc(message: types.Message):
+    user_id = message.from_user.id
+    username = message.from_user.username
+    first_name = message.from_user.first_name
+
+    asignar_rol(user_id, ROL_CAR, municipio=MUNICIPIO_SAN_FRANCISCO, username=username, first_name=first_name)
+    markup = obtener_teclado_por_rol(ROL_CAR)
+
+    texto = (
+        "✅ <b>Rol Asignado con Éxito: CAR / CUADRILLA (SAN FRANCISCO)</b>\n\n"
+        "A partir de este momento puedes reportar la atención de averías de San Francisco.\n\n"
+        "📝 Presiona el botón <b>'📝 Copiar Plantilla de Cierre'</b> o usa /plantilla "
+        "para obtener el formato oficial, complétalo y envíalo."
+    )
+    bot.reply_to(message, texto, reply_markup=markup)
+    logger.info(f"Usuario {user_id} ({username}) asignado como CAR (San Francisco).")
 
 
 @bot.message_handler(commands=["plantilla"])
@@ -371,12 +418,14 @@ def handler_supervisor_ver_ultimos(message: types.Message):
         bot.reply_to(message, "⛔ Opción no permitida para tu rol.")
         return
 
-    ultimos = obtener_ultimos_casos_por_tipo("RESPUESTA_CAR", limite=5)
+    municipio_filtro = obtener_municipio_usuario(user_id) if rol == ROL_SUPERVISOR else None
+    ultimos = obtener_ultimos_casos_por_tipo("RESPUESTA_CAR", limite=5, municipio=municipio_filtro)
     if not ultimos:
-        bot.reply_to(message, "📭 No hay soluciones de cuadrillas registradas aún en el sistema.")
+        bot.reply_to(message, f"📭 No hay soluciones de cuadrillas registradas aún{' para ' + municipio_filtro if municipio_filtro else ''}.")
         return
 
-    bot.send_message(message.chat.id, f"🗂️ <b>Mostrando las últimas {len(ultimos)} soluciones recibidas:</b>")
+    muni_label = f" ({municipio_filtro})" if municipio_filtro else ""
+    bot.send_message(message.chat.id, f"🗂️ <b>Mostrando las últimas {len(ultimos)} soluciones recibidas{muni_label}:</b>")
     for caso in ultimos:
         texto_caso = formatear_respuesta_car_supervisor(caso)
         enviar_caso_a_chat(message.chat.id, texto_caso, caso.get("foto_id"))
@@ -418,9 +467,11 @@ def handler_cat_leer_nuevos_casos(message: types.Message):
 
     ids_leidos = []
     for caso in casos_pendientes:
+        muni_txt = caso.get("municipio") or "Maracaibo"
         texto_caso = (
-            f"⚡ <b>CASO #{caso['id']}</b>\n"
+            f"⚡ <b>CASO #{caso['id']} [📍 {muni_txt.upper()}]</b>\n"
             f"📅 <b>Fecha:</b> <code>{caso['fecha_creacion']}</code>\n"
+            f"📍 <b>Municipio:</b> {muni_txt}\n"
             f"👤 <b>Supervisor:</b> {caso['remitente_nombre']} (ID: <code>{caso['remitente_id']}</code>)\n"
             f"🏷️ <b>Estado anterior:</b> <i>{caso['estado']}</i>\n"
             f"📝 <b>Reporte:</b>\n{caso['contenido']}"
@@ -452,12 +503,13 @@ def handler_supervisor_leer_casos_resueltos(message: types.Message):
         )
         return
 
-    respuestas_pendientes = obtener_casos_por_estado(ESTADO_RESPUESTA_CAR)
+    municipio_sup = obtener_municipio_usuario(user_id)
+    respuestas_pendientes = obtener_casos_por_estado(ESTADO_RESPUESTA_CAR, municipio=municipio_sup)
 
     if not respuestas_pendientes:
         bot.reply_to(
             message,
-            "✅ <b>No hay casos resueltos pendientes por leer.</b>\nNo hay nuevas respuestas de cuadrillas pendientes.",
+            f"✅ <b>No hay casos resueltos pendientes por leer en {municipio_sup}.</b>\nNo hay nuevas respuestas de cuadrillas pendientes.",
             reply_markup=obtener_teclado_por_rol(ROL_SUPERVISOR)
         )
         return
@@ -465,7 +517,7 @@ def handler_supervisor_leer_casos_resueltos(message: types.Message):
     total = len(respuestas_pendientes)
     bot.send_message(
         message.chat.id,
-        f"📬 <b>Se encontraron {total} caso(s) con 'Respuesta CAR' pendientes de lectura:</b>"
+        f"📬 <b>Se encontraron {total} caso(s) con 'Respuesta CAR' pendientes de lectura ({municipio_sup}):</b>"
     )
 
     ids_leidos = []
@@ -476,11 +528,11 @@ def handler_supervisor_leer_casos_resueltos(message: types.Message):
 
     # Actualizar a 'Leído Supervisor'
     marcar_casos_como_leidos(ids_leidos, ESTADO_LEIDO_SUPERVISOR)
-    logger.info(f"Supervisor {user_id} leyó {len(ids_leidos)} respuestas CAR: {ids_leidos}")
+    logger.info(f"Supervisor {user_id} ({municipio_sup}) leyó {len(ids_leidos)} respuestas CAR: {ids_leidos}")
 
     bot.send_message(
         message.chat.id,
-        f"✅ <i>Se han marcado {len(ids_leidos)} caso(s) como <b>'{ESTADO_LEIDO_SUPERVISOR}'</b>.</i>",
+        f"✅ <i>Se han marcado {len(ids_leidos)} caso(s) de {municipio_sup} como <b>'{ESTADO_LEIDO_SUPERVISOR}'</b>.</i>",
         reply_markup=obtener_teclado_por_rol(ROL_SUPERVISOR)
     )
 
@@ -521,19 +573,22 @@ def handler_mensajes_y_fotos(message: types.Message):
 
     # 2. Flujo 1 (Ida): Supervisor envía nuevo reporte (con o sin foto)
     if rol == ROL_SUPERVISOR:
+        municipio_sup = obtener_municipio_usuario(user_id)
         caso_id = crear_caso(
             tipo="REPORTE_SUPERVISOR",
             remitente_id=user_id,
             remitente_nombre=remitente_nombre,
             contenido=contenido,
             estado=ESTADO_PENDIENTE_CAT,
-            foto_id=foto_id
+            foto_id=foto_id,
+            municipio=municipio_sup
         )
-        logger.info(f"Nuevo reporte creado por Supervisor {user_id}. Caso ID: {caso_id} (Foto: {bool(foto_id)})")
+        logger.info(f"Nuevo reporte creado por Supervisor {user_id} ({municipio_sup}). Caso ID: {caso_id} (Foto: {bool(foto_id)})")
         
         adjunto_txt = "\n📸 <b>Evidencia fotográfica adjunta</b>" if foto_id else ""
         texto_confirmacion = (
             f"✅ <b>Reporte Registrado Exitosamente</b>\n\n"
+            f"📍 <b>Municipio:</b> {municipio_sup}\n"
             f"🆔 <b>Caso:</b> #{caso_id}\n"
             f"🏷️ <b>Estado:</b> <code>{ESTADO_PENDIENTE_CAT}</code>"
             f"{adjunto_txt}\n"
@@ -542,10 +597,11 @@ def handler_mensajes_y_fotos(message: types.Message):
         )
         bot.reply_to(message, texto_confirmacion, reply_markup=obtener_teclado_por_rol(ROL_SUPERVISOR))
 
-        # Notificar automáticamente a la sala CAT
+        # Notificar automáticamente a la sala CAT con etiqueta de municipio
         texto_aviso_cat = (
-            f"🔔 <b>¡NUEVO REPORTE ELÉCTRICO ASIGNADO!</b>\n\n"
+            f"🔔 <b>¡NUEVO REPORTE ELÉCTRICO! [📍 {municipio_sup.upper()}]</b>\n\n"
             f"🆔 <b>Caso #{caso_id}</b>\n"
+            f"📍 <b>Municipio:</b> {municipio_sup}\n"
             f"👤 <b>Supervisor:</b> {remitente_nombre}\n"
             f"📝 <b>Detalle de Avería:</b>\n{contenido}"
         )
@@ -554,15 +610,17 @@ def handler_mensajes_y_fotos(message: types.Message):
 
     # 3. Flujo 2 (Vuelta): CAR envía solución de la cuadrilla (con o sin foto)
     if rol == ROL_CAR:
+        municipio_car = obtener_municipio_usuario(user_id)
         caso_id = crear_caso(
             tipo="RESPUESTA_CAR",
             remitente_id=user_id,
             remitente_nombre=remitente_nombre,
             contenido=contenido,
             estado=ESTADO_RESPUESTA_CAR,
-            foto_id=foto_id
+            foto_id=foto_id,
+            municipio=municipio_car
         )
-        logger.info(f"Nueva respuesta creada por CAR {user_id}. Caso ID: {caso_id} (Foto: {bool(foto_id)})")
+        logger.info(f"Nueva respuesta creada por CAR {user_id} ({municipio_car}). Caso ID: {caso_id} (Foto: {bool(foto_id)})")
         
         datos_formato = parsear_formato_car(contenido)
         adjunto_txt = "\n📸 <b>Evidencia fotográfica:</b> Sí" if foto_id else ""
@@ -570,6 +628,7 @@ def handler_mensajes_y_fotos(message: types.Message):
         if datos_formato:
             texto_confirmacion = (
                 f"✅ <b>Formato de Atención Registrado con Éxito</b>\n\n"
+                f"📍 <b>Municipio:</b> {municipio_car}\n"
                 f"🆔 <b>Caso ID:</b> #{caso_id}\n"
                 f"🏷️ <b>Estado:</b> <code>{ESTADO_RESPUESTA_CAR}</code>"
                 f"{adjunto_txt}\n"
@@ -578,33 +637,35 @@ def handler_mensajes_y_fotos(message: types.Message):
                 f"🚛 <b>Unidad MPPEE:</b> {datos_formato.get('unidad_mppee') or 'N/A'}\n"
                 f"📍 <b>Dirección:</b> {datos_formato.get('direccion') or 'N/A'}\n"
                 f"🔧 <b>Solución reportada:</b>\n{datos_formato.get('solucion') or 'N/A'}\n\n"
-                f"<i>La atención fue cargada al sistema y queda lista para la verificación del Supervisor.</i>"
+                f"<i>La atención fue cargada y se notificó a los Supervisores de {municipio_car}.</i>"
             )
         else:
             texto_confirmacion = (
                 f"✅ <b>Solución de Cuadrilla Registrada Exitosamente</b>\n\n"
+                f"📍 <b>Municipio:</b> {municipio_car}\n"
                 f"🆔 <b>Caso:</b> #{caso_id}\n"
                 f"🏷️ <b>Estado:</b> <code>{ESTADO_RESPUESTA_CAR}</code>"
                 f"{adjunto_txt}\n"
                 f"🔧 <b>Detalle reportado:</b>\n{contenido}\n\n"
-                f"<i>La solución ha quedado disponible para la revisión de los Supervisores.</i>"
+                f"<i>La solución fue enviada a los Supervisores de {municipio_car}.</i>"
             )
         bot.reply_to(message, texto_confirmacion, reply_markup=obtener_teclado_por_rol(ROL_CAR))
 
-        # Notificar automáticamente a los supervisores
+        # Notificar automáticamente y de forma exclusiva a los supervisores de ese municipio
         caso_dict = {
             "id": caso_id,
             "tipo": "RESPUESTA_CAR",
             "remitente_nombre": remitente_nombre,
             "fecha_creacion": "Recién reportado",
             "estado": ESTADO_RESPUESTA_CAR,
-            "contenido": contenido
+            "contenido": contenido,
+            "municipio": municipio_car
         }
         texto_aviso_sup = (
-            f"🔔 <b>¡SOLUCIÓN DE CUADRILLA RECIBIDA!</b>\n\n"
+            f"🔔 <b>¡SOLUCIÓN DE CUADRILLA RECIBIDA! [📍 {municipio_car.upper()}]</b>\n\n"
             + formatear_respuesta_car_supervisor(caso_dict)
         )
-        notificar_a_todos_los_supervisores(texto_aviso_sup, foto_id=foto_id)
+        notificar_a_supervisores_de_municipio(texto_aviso_sup, foto_id=foto_id, municipio=municipio_car)
         return
 
     # 4. Caso CAT: No envía reportes por texto libre, consulta mediante el botón

@@ -64,11 +64,13 @@ def formatear_respuesta_car_supervisor(caso: dict) -> str:
     """Genera una vista enriquecida para el Supervisor cuando lee la respuesta de CAR."""
     datos = parsear_formato_car(caso["contenido"])
     
+    municipio_txt = f"📍 <b>Municipio:</b> {caso.get('municipio') or 'Maracaibo'}\n"
     if datos:
         texto = (
             f"🛠️ <b>SOLUCIÓN DE CUADRILLA #{caso['id']}</b>\n"
             f"📅 <b>Registro:</b> <code>{caso['fecha_creacion']}</code>\n"
             f"👷 <b>Enviado por:</b> {caso['remitente_nombre']}\n"
+            f"{municipio_txt}"
             f"────────────────────────\n"
             f"📋 <b>VenApp:</b> <code>{datos.get('venapp') or 'N/A'}</code>\n"
             f"🔢 <b>Reclamo:</b> <code>{datos.get('reclamo') or 'N/A'}</code>\n"
@@ -87,6 +89,7 @@ def formatear_respuesta_car_supervisor(caso: dict) -> str:
             f"🛠️ <b>SOLUCIÓN #{caso['id']}</b>\n"
             f"📅 <b>Fecha:</b> <code>{caso['fecha_creacion']}</code>\n"
             f"👷 <b>Cuadrilla (CAR):</b> {caso['remitente_nombre']}\n"
+            f"{municipio_txt}"
             f"🏷️ <b>Estado anterior:</b> <i>{caso['estado']}</i>\n"
             f"🔧 <b>Detalle reportado:</b>\n{caso['contenido']}"
         )
