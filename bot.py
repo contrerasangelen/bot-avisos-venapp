@@ -1,3 +1,4 @@
+import html
 import logging
 import os
 import sys
@@ -60,6 +61,24 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode="HTML")
 BANNER_PATH = Path(__file__).resolve().parent / "assets" / "banner.jpg"
 
 
+def escapar_html(texto: str) -> str:
+    """Escapa caracteres especiales (&, <, >) para que Telegram nunca falle al parsear HTML."""
+    return html.escape(str(texto or ""))
+
+
+def responder_seguro(message: types.Message, texto: str, reply_markup=None):
+    """Responde con HTML, y si Telegram rechaza por caracteres inválidos, responde en texto plano de respaldo."""
+    try:
+        bot.reply_to(message, texto, reply_markup=reply_markup, parse_mode="HTML")
+    except Exception as e:
+        logger.warning(f"Error enviando HTML a {message.chat.id}, usando fallback plano: {e}")
+        try:
+            texto_plano = texto.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "").replace("<code>", "").replace("</code>", "")
+            bot.reply_to(message, texto_plano, reply_markup=reply_markup, parse_mode=None)
+        except Exception as e2:
+            logger.error(f"Fallo definitivo al responder a {message.chat.id}: {e2}")
+
+
 def enviar_bienvenida_con_banner(chat_id: int, texto: str, reply_markup=None):
     """Envía la imagen institucional con el texto en caption, con fallback a send_message si falla."""
     if BANNER_PATH.exists():
@@ -77,17 +96,30 @@ def enviar_caso_a_chat(chat_id: int, texto: str, foto_id: str = None):
     if foto_id:
         try:
             if len(texto) <= 1024:
-                bot.send_photo(chat_id, photo=foto_id, caption=texto)
+                bot.send_photo(chat_id, photo=foto_id, caption=texto, parse_mode="HTML")
             else:
                 bot.send_photo(chat_id, photo=foto_id)
-                bot.send_message(chat_id, texto)
+                bot.send_message(chat_id, texto, parse_mode="HTML")
             return
         except Exception as e:
             logger.warning(f"No se pudo enviar la foto con ID {foto_id} a {chat_id}: {e}")
+            # Reintentar sin parse_mode
+            try:
+                texto_plano = texto.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "").replace("<code>", "").replace("</code>", "")
+                bot.send_photo(chat_id, photo=foto_id, caption=texto_plano[:1024], parse_mode=None)
+                return
+            except Exception:
+                pass
+
     try:
-        bot.send_message(chat_id, texto)
+        bot.send_message(chat_id, texto, parse_mode="HTML")
     except Exception as e:
-        logger.warning(f"No se pudo enviar mensaje a {chat_id}: {e}")
+        logger.warning(f"Error enviando mensaje HTML a {chat_id}, usando fallback plano: {e}")
+        try:
+            texto_plano = texto.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "").replace("<code>", "").replace("</code>", "")
+            bot.send_message(chat_id, texto_plano, parse_mode=None)
+        except Exception as e2:
+            logger.error(f"Fallo definitivo al enviar mensaje a {chat_id}: {e2}")
 
 
 def notificar_a_todos_los_cat(texto: str, foto_id: str = None):
@@ -181,12 +213,42 @@ def cmd_mirol(message: types.Message):
     texto = (
         f"👤 <b>Información del Usuario:</b>\n"
         f"• <b>ID:</b> <code>{user_id}</code>\n"
-        f"• <b>Nombre:</b> {message.from_user.first_name}\n"
+        f"• <b>Nombre:</b> {escapar_html(message.from_user.first_name)}\n"
         f"• <b>Username:</b> @{message.from_user.username or 'N/A'}\n"
         f"• <b>Rol asignado:</b> <b>{rol}</b>\n"
         f"• <b>Municipio:</b> 📍 <b>{municipio}</b>"
     )
-    bot.reply_to(message, texto, reply_markup=markup)
+    responder_seguro(message, texto, reply_markup=markup)
+
+
+@bot.message_handler(commands=["usuarios"])
+def cmd_listar_usuarios(message: types.Message):
+    """Muestra la lista de usuarios registrados con su rol y municipio."""
+    user_id = message.from_user.id
+    rol = obtener_rol(user_id)
+    if not rol:
+        bot.reply_to(message, "⚠️ No tienes permisos para ver usuarios.")
+        return
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, first_name, username, rol, municipio FROM usuarios")
+        users = [dict(r) for r in cursor.fetchall()]
+
+    if not users:
+        bot.reply_to(message, "📭 No hay usuarios registrados aún.")
+        return
+
+    lineas = [f"👥 <b>USUARIOS REGISTRADOS ({len(users)}):</b>\n"]
+    for u in users:
+        rol_txt = u.get("rol") or "⚠️ Sin rol asignado"
+        muni_txt = u.get("municipio") or "N/A"
+        name_txt = escapar_html(u.get("first_name") or "Usuario")
+        uname = f"@{u['username']}" if u.get("username") else "sin @"
+        lineas.append(f"• <code>{u['user_id']}</code> - {name_txt} ({uname})\n  └ Rol: <b>{rol_txt}</b> | Mcpio: <i>{muni_txt}</i>")
+
+    texto_final = "\n".join(lineas)
+    responder_seguro(message, texto_final)
 
 
 # ==========================================
@@ -586,24 +648,25 @@ def handler_mensajes_y_fotos(message: types.Message):
         logger.info(f"Nuevo reporte creado por Supervisor {user_id} ({municipio_sup}). Caso ID: {caso_id} (Foto: {bool(foto_id)})")
         
         adjunto_txt = "\n📸 <b>Evidencia fotográfica adjunta</b>" if foto_id else ""
+        contenido_esc = escapar_html(contenido)
         texto_confirmacion = (
             f"✅ <b>Reporte Registrado Exitosamente</b>\n\n"
             f"📍 <b>Municipio:</b> {municipio_sup}\n"
             f"🆔 <b>Caso:</b> #{caso_id}\n"
             f"🏷️ <b>Estado:</b> <code>{ESTADO_PENDIENTE_CAT}</code>"
             f"{adjunto_txt}\n"
-            f"📝 <b>Detalle:</b>\n{contenido}\n\n"
+            f"📝 <b>Detalle:</b>\n{contenido_esc}\n\n"
             f"<i>El reporte ha sido puesto a disposición de la sala CAT.</i>"
         )
-        bot.reply_to(message, texto_confirmacion, reply_markup=obtener_teclado_por_rol(ROL_SUPERVISOR))
+        responder_seguro(message, texto_confirmacion, reply_markup=obtener_teclado_por_rol(ROL_SUPERVISOR))
 
         # Notificar automáticamente a la sala CAT con etiqueta de municipio
         texto_aviso_cat = (
             f"🔔 <b>¡NUEVO REPORTE ELÉCTRICO! [📍 {municipio_sup.upper()}]</b>\n\n"
             f"🆔 <b>Caso #{caso_id}</b>\n"
             f"📍 <b>Municipio:</b> {municipio_sup}\n"
-            f"👤 <b>Supervisor:</b> {remitente_nombre}\n"
-            f"📝 <b>Detalle de Avería:</b>\n{contenido}"
+            f"👤 <b>Supervisor:</b> {escapar_html(remitente_nombre)}\n"
+            f"📝 <b>Detalle de Avería:</b>\n{contenido_esc}"
         )
         notificar_a_todos_los_cat(texto_aviso_cat, foto_id=foto_id)
         return
@@ -624,6 +687,7 @@ def handler_mensajes_y_fotos(message: types.Message):
         
         datos_formato = parsear_formato_car(contenido)
         adjunto_txt = "\n📸 <b>Evidencia fotográfica:</b> Sí" if foto_id else ""
+        contenido_esc = escapar_html(contenido)
 
         if datos_formato:
             texto_confirmacion = (
@@ -632,11 +696,11 @@ def handler_mensajes_y_fotos(message: types.Message):
                 f"🆔 <b>Caso ID:</b> #{caso_id}\n"
                 f"🏷️ <b>Estado:</b> <code>{ESTADO_RESPUESTA_CAR}</code>"
                 f"{adjunto_txt}\n"
-                f"📋 <b>VenApp:</b> <code>{datos_formato.get('venapp') or 'N/A'}</code>\n"
-                f"🔢 <b>Reclamo:</b> <code>{datos_formato.get('reclamo') or 'N/A'}</code>\n"
-                f"🚛 <b>Unidad MPPEE:</b> {datos_formato.get('unidad_mppee') or 'N/A'}\n"
-                f"📍 <b>Dirección:</b> {datos_formato.get('direccion') or 'N/A'}\n"
-                f"🔧 <b>Solución reportada:</b>\n{datos_formato.get('solucion') or 'N/A'}\n\n"
+                f"📋 <b>VenApp:</b> <code>{escapar_html(datos_formato.get('venapp') or 'N/A')}</code>\n"
+                f"🔢 <b>Reclamo:</b> <code>{escapar_html(datos_formato.get('reclamo') or 'N/A')}</code>\n"
+                f"🚛 <b>Unidad MPPEE:</b> {escapar_html(datos_formato.get('unidad_mppee') or 'N/A')}\n"
+                f"📍 <b>Dirección:</b> {escapar_html(datos_formato.get('direccion') or 'N/A')}\n"
+                f"🔧 <b>Solución reportada:</b>\n{escapar_html(datos_formato.get('solucion') or 'N/A')}\n\n"
                 f"<i>La atención fue cargada y se notificó a los Supervisores de {municipio_car}.</i>"
             )
         else:
@@ -646,10 +710,10 @@ def handler_mensajes_y_fotos(message: types.Message):
                 f"🆔 <b>Caso:</b> #{caso_id}\n"
                 f"🏷️ <b>Estado:</b> <code>{ESTADO_RESPUESTA_CAR}</code>"
                 f"{adjunto_txt}\n"
-                f"🔧 <b>Detalle reportado:</b>\n{contenido}\n\n"
+                f"🔧 <b>Detalle reportado:</b>\n{contenido_esc}\n\n"
                 f"<i>La solución fue enviada a los Supervisores de {municipio_car}.</i>"
             )
-        bot.reply_to(message, texto_confirmacion, reply_markup=obtener_teclado_por_rol(ROL_CAR))
+        responder_seguro(message, texto_confirmacion, reply_markup=obtener_teclado_por_rol(ROL_CAR))
 
         # Notificar automáticamente y de forma exclusiva a los supervisores de ese municipio
         caso_dict = {
